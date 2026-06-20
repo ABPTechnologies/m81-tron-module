@@ -4,8 +4,10 @@
   "author": "ABP Technologies",
   "description": "Tron (TRX) + TRC-20 USDT support for the m81 self-custody wallet",
   "repository": "https://github.com/ABPTechnologies/m81-tron-module",
-  "publicKey": "REPLACE_WITH_ED25519_PUBLIC_KEY_FROM_npm_run_keygen",
-  "include": ["module/index.js"],
+  "publicKey": "538c102d3d936bff3dd261f535e95c45a824a8d16b86e73e4ddddc5d3fac21d8",
+  "include": [
+    "module/index.js"
+  ],
   "src": {
     "namespace": "tronModule"
   },

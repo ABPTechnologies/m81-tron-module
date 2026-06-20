@@ -1,0 +1,6 @@
+node_modules/
+module/
+lib/
+*.zip
+# NEVER commit the module signing secret
+module-signing.key

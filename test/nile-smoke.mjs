@@ -85,10 +85,16 @@ if (process.env.TRON_TRC20) {
 
 // 3) optional broadcast: native TRX transfer (proves create → sign → broadcast)
 if (process.env.TRON_SMOKE_SEND === '1') {
-  if (!process.env.TRON_TO) { console.error('\nTRON_SMOKE_SEND=1 needs TRON_TO=<recipient base58>'); process.exit(1) }
+  if (!process.env.TRON_TO) { console.error('\nTRON_SMOKE_SEND=1 needs TRON_TO=<recipient base58> (a DIFFERENT address — Tron rejects self-transfers)'); process.exit(1) }
+  if (process.env.TRON_TO === addr) { console.error('\nTRON_TO must be a DIFFERENT address than the sender — Tron rejects self-transfers.'); process.exit(1) }
   if (sun < 1_100_000n) { console.error('\nneed ≥ ~1.1 TRX to send — fund via the faucet first'); process.exit(1) }
   console.log('\n— building native TRX transfer (1 TRX) —')
   const built = await rpc('/wallet/createtransaction', { owner_address: addr, to_address: process.env.TRON_TO, amount: 1_000_000, visible: true })
+  if (!built.raw_data_hex) {
+    const msg = built.Error || (built.message ? Buffer.from(built.message, 'hex').toString() : JSON.stringify(built))
+    console.error('build failed (no transaction returned):', msg)
+    process.exit(1)
+  }
   const id = built.txID && built.txID.length === 64 ? built.txID : txId(built.raw_data_hex)
   const sig = signTxId(id, priv)
   console.log('txID      :', id)

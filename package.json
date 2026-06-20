@@ -1,20 +1,28 @@
 {
   "name": "m81-tron-module",
   "version": "0.1.0",
-  "description": "AirGap isolated module: Tron (TRX) + TRC-20 USDT for the m81 self-custody wallet",
+  "description": "AirGap module: Tron (TRX) + TRC-20 USDT for the m81 self-custody wallet",
   "author": "ABP Technologies",
   "license": "MIT",
   "private": true,
-  "type": "module",
-  "main": "module/index.js",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    }
+  },
+  "files": ["lib", "src"],
   "scripts": {
     "verify:crypto": "node test/verify.mjs",
     "smoke:nile": "node test/nile-smoke.mjs",
-    "build": "node scripts/build.mjs",
+    "build:lib": "tsc -p tsconfig.lib.json",
+    "build:bundle": "node scripts/build.mjs",
     "sign": "node scripts/sign-module.mjs",
     "keygen": "node scripts/keygen.mjs",
-    "bundle": "npm run build && npm run sign && node scripts/bundle.mjs",
-    "typecheck": "tsc --noEmit"
+    "bundle": "npm run build:bundle && npm run sign && node scripts/bundle.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@noble/secp256k1": "^2.1.0",
@@ -23,10 +31,12 @@
     "bs58": "^5.0.0"
   },
   "peerDependencies": {
-    "@airgap/module-kit": "*"
+    "@airgap/module-kit": "*",
+    "@airgap/serializer": "*"
   },
   "devDependencies": {
-    "@airgap/module-kit": "*",
+    "@airgap/module-kit": "0.13.46",
+    "@airgap/serializer": "0.13.46",
     "esbuild": "^0.23.1",
     "tronweb": "^6.0.0",
     "typescript": "^5.4.0"

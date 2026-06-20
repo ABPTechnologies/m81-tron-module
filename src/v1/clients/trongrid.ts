@@ -77,6 +77,18 @@ export class TronGridClient {
     return word ? BigInt('0x' + word) : 0n
   }
 
+  /** Build an unsigned native TRX transfer (amount in SUN). */
+  async createNativeTransfer(from: string, to: string, amountSun: number): Promise<TronUnsignedTransaction> {
+    const r = await this.post<TronUnsignedTransaction & { Error?: string }>('/wallet/createtransaction', {
+      owner_address: from,
+      to_address: to,
+      amount: amountSun,
+      visible: true,
+    })
+    if (!r.raw_data_hex) throw new Error(`createtransaction failed: ${r.Error ?? 'unknown'}`)
+    return r
+  }
+
   /** Build an unsigned TRC-20 USDT transfer. Returns the tx with `raw_data_hex`. */
   async buildUsdtTransfer(
     from: string,

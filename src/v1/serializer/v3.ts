@@ -1,23 +1,14 @@
 /**
- * V3 serializer companion — the QR transport between the online Wallet (builds
- * the unsigned tx) and the offline Vault (signs it). For Tron the only payload
- * that must cross the air-gap is `raw_data_hex` (+ txID); the Vault hashes and
- * signs it, then the signature crosses back.
+ * V3 serializer companion — the QR transport between the online Wallet (builds the
+ * unsigned tx) and the offline Vault (signs it). For Tron the only payload that
+ * must cross the air-gap is `raw_data_hex` (+ txID); the Vault hashes + signs it,
+ * and the signature crosses back.
+ *
+ * Conformed to AirGapV3SerializerCompanion@0.13.46. TransactionSignRequest/Response
+ * come from @airgap/serializer (transaction payload is generic `T`).
  */
-import {
-  AirGapV3SerializerCompanion,
-  V3SchemaConfiguration,
-  TransactionSignRequest,
-  TransactionSignResponse,
-} from '@airgap/module-kit'
-
-export interface TronTransactionSignRequest extends TransactionSignRequest {
-  transaction: { txID: string; raw_data_hex: string; raw_data?: unknown; visible?: boolean }
-}
-
-export interface TronTransactionSignResponse extends TransactionSignResponse {
-  transaction: { txID: string; raw_data_hex: string; signature: string[]; visible?: boolean }
-}
+import { TransactionSignRequest, TransactionSignResponse } from '@airgap/serializer'
+import { AirGapV3SerializerCompanion, V3SchemaConfiguration, UnsignedTransaction, SignedTransaction } from '@airgap/module-kit'
 
 const TRON_SIGN_REQUEST_SCHEMA = {
   $schema: 'http://json-schema.org/draft-07/schema#',
@@ -39,56 +30,50 @@ const TRON_SIGN_REQUEST_SCHEMA = {
 
 export class TronV3SerializerCompanion implements AirGapV3SerializerCompanion {
   public readonly schemas: V3SchemaConfiguration[] = [
-    {
-      type: 'TransactionSignRequest',
-      schema: { schema: TRON_SIGN_REQUEST_SCHEMA as object },
-      protocolIdentifier: 'tron',
-    },
-    {
-      type: 'TransactionSignRequest',
-      schema: { schema: TRON_SIGN_REQUEST_SCHEMA as object },
-      protocolIdentifier: 'tron-trc20-usdt',
-    },
+    { type: 'TransactionSignRequest', schema: { schema: TRON_SIGN_REQUEST_SCHEMA }, protocolIdentifier: 'tron' },
+    { type: 'TransactionSignRequest', schema: { schema: TRON_SIGN_REQUEST_SCHEMA }, protocolIdentifier: 'tron-trc20-usdt' },
+    { type: 'TransactionSignResponse', schema: { schema: TRON_SIGN_REQUEST_SCHEMA }, protocolIdentifier: 'tron' },
+    { type: 'TransactionSignResponse', schema: { schema: TRON_SIGN_REQUEST_SCHEMA }, protocolIdentifier: 'tron-trc20-usdt' },
   ] as unknown as V3SchemaConfiguration[]
 
   async toTransactionSignRequest(
     _identifier: string,
-    unsignedTransaction: { tron: { txID: string; raw_data_hex: string; visible?: boolean } },
+    unsignedTransaction: UnsignedTransaction,
     publicKey: string,
-    _callbackUrl?: string,
+    callbackUrl?: string,
   ): Promise<TransactionSignRequest> {
-    return {
-      transaction: {
-        txID: unsignedTransaction.tron.txID,
-        raw_data_hex: unsignedTransaction.tron.raw_data_hex,
-        visible: unsignedTransaction.tron.visible,
-      },
-      publicKey,
-    } as TronTransactionSignRequest
+    return { transaction: unsignedTransaction, publicKey, callbackURL: callbackUrl }
   }
 
   async fromTransactionSignRequest(
     _identifier: string,
-    request: TronTransactionSignRequest,
-  ): Promise<{ tron: { txID: string; raw_data_hex: string; visible?: boolean } }> {
-    return { tron: { ...request.transaction } }
+    transactionSignRequest: TransactionSignRequest,
+  ): Promise<UnsignedTransaction> {
+    return transactionSignRequest.transaction as UnsignedTransaction
+  }
+
+  async validateTransactionSignRequest(_identifier: string, request: TransactionSignRequest): Promise<boolean> {
+    const tx = request?.transaction as { txID?: string; raw_data_hex?: string } | undefined
+    return !!tx && typeof tx.raw_data_hex === 'string' && tx.raw_data_hex.length > 0
   }
 
   async toTransactionSignResponse(
     _identifier: string,
-    signedTransaction: { tron: { txID: string; raw_data_hex: string; signature: string[]; visible?: boolean } },
+    signedTransaction: SignedTransaction,
     accountIdentifier: string,
   ): Promise<TransactionSignResponse> {
-    return {
-      transaction: { ...signedTransaction.tron },
-      accountIdentifier,
-    } as TronTransactionSignResponse
+    return { transaction: signedTransaction, accountIdentifier, from: [] } as unknown as TransactionSignResponse
   }
 
   async fromTransactionSignResponse(
     _identifier: string,
-    response: TronTransactionSignResponse,
-  ): Promise<{ tron: { txID: string; raw_data_hex: string; signature: string[]; visible?: boolean } }> {
-    return { tron: { ...response.transaction } }
+    transactionSignResponse: TransactionSignResponse,
+  ): Promise<SignedTransaction> {
+    return transactionSignResponse.transaction as unknown as SignedTransaction
+  }
+
+  async validateTransactionSignResponse(_identifier: string, response: TransactionSignResponse): Promise<boolean> {
+    const tx = (response as unknown as { transaction?: { signature?: string[] } }).transaction
+    return !!tx && Array.isArray(tx.signature) && tx.signature.length > 0
   }
 }

@@ -1,30 +1,34 @@
 /**
- * TronProtocol — the native TRX protocol (account-based, secp256k1).
- * Implements both the offline (Vault: derive/sign) and online (Wallet:
- * balance/build/broadcast) halves of the AirGap protocol interface.
+ * TronProtocol — native TRX protocol (account-based, secp256k1). Implements the
+ * full AirGapProtocol surface (offline: derive/sign; online: balance/build/
+ * broadcast). The USDT TRC-20 token extends this (see TronUSDTProtocol).
  *
- * The USDT TRC-20 token is a sub-protocol (see TronUSDTProtocol) layered on this.
- *
- * NOTE: targets `@airgap/module-kit` from the `preview/isolated-modules` app
- * builds. Types are imported from module-kit; the substantive Tron logic lives in
- * ../crypto and ../clients and is unit-verified independent of module-kit.
+ * Conformed to @airgap/module-kit@0.13.46. The substantive Tron logic lives in
+ * ../crypto + ../clients (unit-verified vs tronweb and proven on Nile testnet);
+ * this file is the typed module-kit wrapper. Sealed key/transaction types are
+ * cast at the boundaries — the module-kit transaction payload is opaque, so we
+ * carry the real Tron fields through and cast in/out.
  */
 import {
   AirGapProtocol,
   ProtocolMetadata,
+  ProtocolNetwork,
   PublicKey,
   SecretKey,
   KeyPair,
+  CryptoConfiguration,
   CryptoDerivative,
   Amount,
   Balance,
+  FeeEstimation,
   AirGapTransaction,
+  AirGapTransactionsWithCursor,
+  TransactionCursor,
   TransactionDetails,
-  TransactionConfiguration,
+  TransactionFullConfiguration,
+  TransactionSimpleConfiguration,
   UnsignedTransaction,
   SignedTransaction,
-  ProtocolNetwork,
-  FeeDefaults,
 } from '@airgap/module-kit'
 
 import {
@@ -33,21 +37,43 @@ import {
   txIdFromRawDataHex,
   signTxId,
 } from '../crypto/tron-crypto'
-import { TronGridClient, TronNetwork, TronUnsignedTransaction, TRON_MAINNET } from '../clients/trongrid'
+import { TronGridClient, TronUnsignedTransaction } from '../clients/trongrid'
 
-export const TRON_UNITS = {
-  TRX: { symbol: 'TRX', decimals: 6 },
+/** The Tron transaction payload we carry inside the opaque module-kit tx types. */
+export interface TronTxPayload {
+  txID: string
+  raw_data?: unknown
+  raw_data_hex: string
+  visible?: boolean
+  signature?: string[]
 }
 
-export interface TronProtocolOptions {
-  network: TronNetwork
+export const TRON_MAINNET_NETWORK: ProtocolNetwork = {
+  name: 'Mainnet',
+  type: 'mainnet',
+  rpcUrl: 'https://api.trongrid.io',
+  blockExplorerUrl: 'https://tronscan.org',
+}
+export const TRON_NILE_NETWORK: ProtocolNetwork = {
+  name: 'Nile Testnet',
+  type: 'testnet',
+  rpcUrl: 'https://nile.trongrid.io',
+  blockExplorerUrl: 'https://nile.tronscan.org',
 }
 
 export class TronProtocol implements AirGapProtocol {
-  private readonly client: TronGridClient
+  protected readonly client: TronGridClient
 
-  constructor(private readonly options: TronProtocolOptions = { network: TRON_MAINNET }) {
-    this.client = new TronGridClient(options.network)
+  constructor(
+    protected readonly network: ProtocolNetwork = TRON_MAINNET_NETWORK,
+    protected readonly apiKey?: string,
+  ) {
+    this.client = new TronGridClient({
+      name: network.name,
+      rpcUrl: network.rpcUrl,
+      explorerUrl: network.blockExplorerUrl,
+      apiKey,
+    })
   }
 
   // ---- metadata / network ----------------------------------------------------
@@ -55,36 +81,30 @@ export class TronProtocol implements AirGapProtocol {
     return {
       identifier: 'tron',
       name: 'Tron',
-      units: TRON_UNITS,
+      units: { TRX: { symbol: { value: 'TRX' }, decimals: 6 } },
       mainUnit: 'TRX',
       account: {
         standardDerivationPath: `m/44'/195'/0'/0/0`, // SLIP-0044 coin type 195
         address: { isCaseSensitive: true, placeholder: 'T…', regex: '^T[1-9A-HJ-NP-Za-km-z]{33}$' },
       },
-    } as ProtocolMetadata
+    }
   }
 
   async getNetwork(): Promise<ProtocolNetwork> {
-    return {
-      name: this.options.network.name,
-      type: this.options.network.name === 'mainnet' ? 'mainnet' : 'testnet',
-      rpcUrl: this.options.network.rpcUrl,
-      blockExplorerUrl: this.options.network.explorerUrl,
-    } as ProtocolNetwork
+    return this.network
   }
 
   // ---- offline (Vault) -------------------------------------------------------
-  async getCryptoConfiguration() {
-    return { algorithm: 'secp256k1' as const }
+  async getCryptoConfiguration(): Promise<CryptoConfiguration> {
+    return { algorithm: 'secp256k1' }
   }
 
   async getKeyPairFromDerivative(derivative: CryptoDerivative): Promise<KeyPair> {
-    // derivative.secretKey is the BIP32-derived secp256k1 private key (hex).
     const secretKeyHex = derivative.secretKey.replace(/^0x/, '')
-    const publicKey = Buffer.from(publicKeyFromPrivateKey(secretKeyHex)).toString('hex')
+    const publicKeyHex = Buffer.from(publicKeyFromPrivateKey(secretKeyHex)).toString('hex')
     return {
-      secretKey: { type: 'priv', format: 'hex', value: secretKeyHex } as SecretKey,
-      publicKey: { type: 'pub', format: 'hex', value: publicKey } as PublicKey,
+      secretKey: { format: 'hex', value: secretKeyHex } as SecretKey,
+      publicKey: { format: 'hex', value: publicKeyHex } as PublicKey,
     }
   }
 
@@ -96,39 +116,65 @@ export class TronProtocol implements AirGapProtocol {
     transaction: UnsignedTransaction,
     secretKey: SecretKey,
   ): Promise<SignedTransaction> {
-    const tx = (transaction as unknown as { tron: TronUnsignedTransaction }).tron
+    const tx = transaction as unknown as TronTxPayload
     const txId = tx.txID && tx.txID.length === 64 ? tx.txID : txIdFromRawDataHex(tx.raw_data_hex)
     const signature = signTxId(txId, secretKey.value)
-    const signed: TronUnsignedTransaction = { ...tx, txID: txId, signature: [signature] }
-    return { type: 'signed', tron: signed } as unknown as SignedTransaction
+    const signed: TronTxPayload = { ...tx, txID: txId, signature: [signature] }
+    return { type: 'signed', ...signed } as unknown as SignedTransaction
   }
 
   // ---- online (Wallet) -------------------------------------------------------
   async getBalanceOfPublicKey(publicKey: PublicKey): Promise<Balance> {
     const address = await this.getAddressFromPublicKey(publicKey)
     const sun = await this.client.getTrxBalance(address)
-    return { total: { value: sun.toString(), unit: 'TRX' } as Amount } as Balance
+    return { total: { value: sun.toString(), unit: 'TRX' } }
   }
 
-  async getTransactionFeeWithPublicKey(): Promise<FeeDefaults> {
+  async getTransactionsForPublicKey(
+    _publicKey: PublicKey,
+    _limit: number,
+    cursor?: TransactionCursor,
+  ): Promise<AirGapTransactionsWithCursor> {
+    // History is surfaced via the block explorer link; no indexer wired here.
+    return { transactions: [], cursor: { hasNext: false, ...(cursor ?? {}) } as TransactionCursor }
+  }
+
+  async getTransactionMaxAmountWithPublicKey(
+    publicKey: PublicKey,
+    _to: string[],
+    _configuration?: TransactionFullConfiguration,
+  ): Promise<Amount> {
+    const { total } = await this.getBalanceOfPublicKey(publicKey)
+    return total
+  }
+
+  async getTransactionFeeWithPublicKey(
+    _publicKey: PublicKey,
+    _details: TransactionDetails[],
+    _configuration?: TransactionSimpleConfiguration,
+  ): Promise<FeeEstimation> {
     // TRX transfers are paid in bandwidth/energy; surface a conservative TRX cap.
-    return { low: '1000000', medium: '1100000', high: '1500000' } as unknown as FeeDefaults
+    return {
+      low: { value: '1000000', unit: 'TRX' },
+      medium: { value: '1100000', unit: 'TRX' },
+      high: { value: '1500000', unit: 'TRX' },
+    }
   }
 
   async prepareTransactionWithPublicKey(
     publicKey: PublicKey,
     details: TransactionDetails[],
-    _config?: TransactionConfiguration,
+    _configuration?: TransactionFullConfiguration,
   ): Promise<UnsignedTransaction> {
     const from = await this.getAddressFromPublicKey(publicKey)
     const to = details[0].to
     const amount = details[0].amount.value
     const built = await this.buildNativeTransfer(from, to, amount)
-    return { type: 'unsigned', tron: built } as unknown as UnsignedTransaction
+    return { type: 'unsigned', ...(built as unknown as TronTxPayload) } as unknown as UnsignedTransaction
   }
 
   async broadcastTransaction(transaction: SignedTransaction): Promise<string> {
-    const tx = (transaction as unknown as { tron: TronUnsignedTransaction }).tron
+    const tx = transaction as unknown as TronUnsignedTransaction
     const r = await this.client.broadcast(tx)
     if (r.result === false) throw new Error(`broadcast failed: ${r.message ?? 'unknown'}`)
     return r.txid ?? tx.txID
@@ -139,29 +185,22 @@ export class TronProtocol implements AirGapProtocol {
     publicKey: PublicKey,
   ): Promise<AirGapTransaction[]> {
     const from = await this.getAddressFromPublicKey(publicKey)
-    const tx = (transaction as unknown as { tron: TronUnsignedTransaction }).tron
+    const tx = transaction as unknown as TronTxPayload
     return [
       {
         from: [from],
         to: [],
+        isInbound: false,
         amount: { value: '0', unit: 'TRX' },
         fee: { value: '0', unit: 'TRX' },
-        network: await this.getNetwork(),
-        // txID surfaced so the Vault can show the user what they're signing.
-        extra: { txID: tx.txID },
-      } as unknown as AirGapTransaction,
+        network: this.network,
+        json: { txID: tx.txID },
+      },
     ]
   }
 
-  // ---- helper used by the native + token paths -------------------------------
-  protected buildNativeTransfer(from: string, to: string, amountSun: string) {
-    // Native TRX transfer is /wallet/createtransaction; for USDT the sub-protocol
-    // overrides this with /wallet/triggersmartcontract (see TronUSDTProtocol).
-    return this.client['post']<TronUnsignedTransaction>('/wallet/createtransaction', {
-      owner_address: from,
-      to_address: to,
-      amount: Number(amountSun),
-      visible: true,
-    })
+  // ---- helper (overridden by the TRC-20 sub-protocol) ------------------------
+  protected buildNativeTransfer(from: string, to: string, amountSun: string): Promise<TronUnsignedTransaction> {
+    return this.client.createNativeTransfer(from, to, Number(amountSun))
   }
 }

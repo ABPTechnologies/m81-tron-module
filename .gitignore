@@ -1,6 +1,6 @@
 node_modules/
 module/
-lib/
 *.zip
+# lib/ IS committed (the importable build the m81 wallet consumes) — do not ignore
 # NEVER commit the module signing secret
 module-signing.key

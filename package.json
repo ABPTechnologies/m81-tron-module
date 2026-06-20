@@ -9,6 +9,7 @@
   "main": "module/index.js",
   "scripts": {
     "verify:crypto": "node test/verify.mjs",
+    "smoke:nile": "node test/nile-smoke.mjs",
     "build": "node scripts/build.mjs",
     "sign": "node scripts/sign-module.mjs",
     "keygen": "node scripts/keygen.mjs",

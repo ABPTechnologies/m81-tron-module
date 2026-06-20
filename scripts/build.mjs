@@ -4,9 +4,15 @@
  * `src.namespace`). The AirGap app loads this file in its isolated JS context.
  */
 import { build } from 'esbuild'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, copyFileSync, existsSync } from 'node:fs'
 
 mkdirSync('module', { recursive: true })
+
+// copy token icons → module/assets/ (referenced by manifest res.symbol + include[])
+mkdirSync('module/assets', { recursive: true })
+for (const icon of ['trx.svg', 'usdt.svg']) {
+  if (existsSync(`assets/${icon}`)) copyFileSync(`assets/${icon}`, `module/assets/${icon}`)
+}
 
 await build({
   entryPoints: ['src/index.ts'],

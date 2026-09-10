@@ -40,6 +40,27 @@ export interface TronUnsignedTransaction {
   signature?: string[]
 }
 
+/** A TRC-20 transfer as returned by TronGrid's account-transactions API. */
+export interface Trc20Transfer {
+  txID: string
+  from: string
+  to: string
+  value: string // base units (string)
+  contract: string
+  symbol: string
+  decimals: number
+  timestampMs: number
+}
+
+interface RawTrc20Tx {
+  transaction_id: string
+  from: string
+  to: string
+  value: string
+  block_timestamp: number
+  token_info?: { address?: string; symbol?: string; decimals?: number }
+}
+
 export class TronGridClient {
   constructor(private readonly network: TronNetwork) {}
 
@@ -53,6 +74,44 @@ export class TronGridClient {
     })
     if (!res.ok) throw new Error(`TronGrid ${path} → HTTP ${res.status}`)
     return (await res.json()) as T
+  }
+
+  private async get<T>(path: string): Promise<T> {
+    const headers: Record<string, string> = {}
+    if (this.network.apiKey) headers['TRON-PRO-API-KEY'] = this.network.apiKey
+    const res = await fetch(`${this.network.rpcUrl}${path}`, { headers })
+    if (!res.ok) throw new Error(`TronGrid ${path} → HTTP ${res.status}`)
+    return (await res.json()) as T
+  }
+
+  /**
+   * Inbound TRC-20 transfers TO an address (newest first), for settlement
+   * reconciliation. Uses TronGrid's account-transactions API. Each item carries
+   * the on-chain txID, from/to, value (base units), and block timestamp (ms).
+   */
+  async listInboundTrc20(
+    address: string,
+    opts: { contract?: string; limit?: number; minTimestampMs?: number } = {},
+  ): Promise<Trc20Transfer[]> {
+    const params = new URLSearchParams({
+      only_to: 'true',
+      limit: String(opts.limit ?? 50),
+      contract_address: opts.contract ?? USDT_TRC20_CONTRACT,
+    })
+    if (opts.minTimestampMs) params.set('min_timestamp', String(opts.minTimestampMs))
+    const r = await this.get<{ data?: RawTrc20Tx[] }>(
+      `/v1/accounts/${address}/transactions/trc20?${params.toString()}`,
+    )
+    return (r.data ?? []).map((t) => ({
+      txID: t.transaction_id,
+      from: t.from,
+      to: t.to,
+      value: t.value,
+      contract: t.token_info?.address ?? opts.contract ?? USDT_TRC20_CONTRACT,
+      symbol: t.token_info?.symbol ?? 'USDT',
+      decimals: t.token_info?.decimals ?? 6,
+      timestampMs: t.block_timestamp,
+    }))
   }
 
   /** Native TRX balance in SUN (1 TRX = 1e6 SUN). */

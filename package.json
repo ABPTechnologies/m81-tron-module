@@ -17,6 +17,7 @@
   "scripts": {
     "verify:crypto": "node test/verify.mjs",
     "smoke:nile": "node test/nile-smoke.mjs",
+    "check:settlement": "node test/settlement-check.mjs",
     "build:lib": "tsc -p tsconfig.lib.json",
     "build:bundle": "node scripts/build.mjs",
     "sign": "node scripts/sign-module.mjs",
